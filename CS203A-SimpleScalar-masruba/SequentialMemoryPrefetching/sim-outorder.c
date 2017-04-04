@@ -2,20 +2,20 @@
 
 /* SimpleScalar(TM) Tool Suite
  * Copyright (C) 1994-2003 by Todd M. Austin, Ph.D. and SimpleScalar, LLC.
- * All Rights Reserved. 
- * 
+ * All Rights Reserved.
+ *
  * THIS IS A LEGAL DOCUMENT, BY USING SIMPLESCALAR,
  * YOU ARE AGREEING TO THESE TERMS AND CONDITIONS.
- * 
+ *
  * No portion of this work may be used by any commercial entity, or for any
  * commercial purpose, without the prior, written permission of SimpleScalar,
  * LLC (info@simplescalar.com). Nonprofit and noncommercial use is permitted
  * as described below.
- * 
+ *
  * 1. SimpleScalar is provided AS IS, with no warranty of any kind, express
  * or implied. The user of the program accepts full responsibility for the
  * application of the program and the use of any results.
- * 
+ *
  * 2. Nonprofit and noncommercial use is encouraged. SimpleScalar may be
  * downloaded, compiled, executed, copied, and modified solely for nonprofit,
  * educational, noncommercial research, and noncommercial scholarship
@@ -24,13 +24,13 @@
  * solely for nonprofit, educational, noncommercial research, and
  * noncommercial scholarship purposes provided that this notice in its
  * entirety accompanies all copies.
- * 
+ *
  * 3. ALL COMMERCIAL USE, AND ALL USE BY FOR PROFIT ENTITIES, IS EXPRESSLY
  * PROHIBITED WITHOUT A LICENSE FROM SIMPLESCALAR, LLC (info@simplescalar.com).
- * 
+ *
  * 4. No nonprofit user may place any restrictions on the use of this software,
  * including as modified by the user, by any other authorized user.
- * 
+ *
  * 5. Noncommercial and nonprofit users may distribute copies of SimpleScalar
  * in compiled or executable form as set forth in Section 2, provided that
  * either: (A) it is accompanied by the corresponding machine-readable source
@@ -40,11 +40,11 @@
  * must permit verbatim duplication by anyone, or (C) it is distributed by
  * someone who received only the executable form, and is accompanied by a
  * copy of the written offer of source code.
- * 
+ *
  * 6. SimpleScalar was developed by Todd M. Austin, Ph.D. The tool suite is
  * currently maintained by SimpleScalar LLC (info@simplescalar.com). US Mail:
  * 2395 Timbercrest Court, Ann Arbor, MI 48105.
- * 
+ *
  * Copyright (C) 1994-2003 by Todd M. Austin, Ph.D. and SimpleScalar, LLC.
  */
 
@@ -626,7 +626,7 @@ dtlb_access_fn(enum mem_cmd cmd,	/* access cmd, Read or Write */
 void
 sim_reg_options(struct opt_odb_t *odb)
 {
-  opt_reg_header(odb, 
+  opt_reg_header(odb,
 "sim-outorder: This simulator implements a very detailed out-of-order issue\n"
 "superscalar processor with a two-level memory system and speculative\n"
 "execution support.  This simulator is a performance simulator, tracking the\n"
@@ -813,9 +813,10 @@ sim_reg_options(struct opt_odb_t *odb)
 	      &cache_dl1_lat, /* default */1,
 	      /* print */TRUE, /* format */NULL);
 
+	/* cs203A */
   opt_reg_string(odb, "-cache:dl2",
 		 "l2 data cache config, i.e., {<config>|none}",
-		 &cache_dl2_opt, "ul2:1024:64:4:l",
+		 &cache_dl2_opt, "ul2:1024:64:4:l:0",
 		 /* print */TRUE, NULL);
 
   opt_reg_int(odb, "-cache:dl2lat",
@@ -934,6 +935,8 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 {
   char name[128], c;
   int nsets, bsize, assoc;
+	/* cs203A */
+	int dl2_prefetch_block_count;
 
   if (fastfwd_count < 0 || fastfwd_count >= 2147483647)
     fatal("bad fast forward count: %d", fastfwd_count);
@@ -1067,22 +1070,26 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
       if (sscanf(cache_dl1_opt, "%[^:]:%d:%d:%d:%c",
 		 name, &nsets, &bsize, &assoc, &c) != 5)
 	fatal("bad l1 D-cache parms: <name>:<nsets>:<bsize>:<assoc>:<repl>");
+				
+			/* cs203A */
       cache_dl1 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			       /* usize */0, assoc, cache_char2policy(c),
-			       dl1_access_fn, /* hit lat */cache_dl1_lat);
+			       dl1_access_fn, /* hit lat */cache_dl1_lat, 0);
 
       /* is the level 2 D-cache defined? */
       if (!mystricmp(cache_dl2_opt, "none"))
 	cache_dl2 = NULL;
       else
 	{
-	  if (sscanf(cache_dl2_opt, "%[^:]:%d:%d:%d:%c",
-		     name, &nsets, &bsize, &assoc, &c) != 5)
+		/* cs203A */
+	  if (sscanf(cache_dl2_opt, "%[^:]:%d:%d:%d:%c:%d",
+		     name, &nsets, &bsize, &assoc, &c, &dl2_prefetch_block_count) != 6)
 	    fatal("bad l2 D-cache parms: "
-		  "<name>:<nsets>:<bsize>:<assoc>:<repl>");
+		  "<name>:<nsets>:<bsize>:<assoc>:<repl>:<prefetchblkcount>");
+		/* cs203A */
 	  cache_dl2 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 				   /* usize */0, assoc, cache_char2policy(c),
-				   dl2_access_fn, /* hit lat */cache_dl2_lat);
+				   dl2_access_fn, /* hit lat */cache_dl2_lat, dl2_prefetch_block_count);
 	}
     }
 
@@ -1123,9 +1130,11 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
       if (sscanf(cache_il1_opt, "%[^:]:%d:%d:%d:%c",
 		 name, &nsets, &bsize, &assoc, &c) != 5)
 	fatal("bad l1 I-cache parms: <name>:<nsets>:<bsize>:<assoc>:<repl>");
+
+			/* cs203A */
       cache_il1 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			       /* usize */0, assoc, cache_char2policy(c),
-			       il1_access_fn, /* hit lat */cache_il1_lat);
+			       il1_access_fn, /* hit lat */cache_il1_lat, 0);
 
       /* is the level 2 D-cache defined? */
       if (!mystricmp(cache_il2_opt, "none"))
@@ -1142,9 +1151,10 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
 		     name, &nsets, &bsize, &assoc, &c) != 5)
 	    fatal("bad l2 I-cache parms: "
 		  "<name>:<nsets>:<bsize>:<assoc>:<repl>");
+		/* cs203A */
 	  cache_il2 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 				   /* usize */0, assoc, cache_char2policy(c),
-				   il2_access_fn, /* hit lat */cache_il2_lat);
+				   il2_access_fn, /* hit lat */cache_il2_lat, 0);
 	}
     }
 
@@ -1156,10 +1166,12 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
       if (sscanf(itlb_opt, "%[^:]:%d:%d:%d:%c",
 		 name, &nsets, &bsize, &assoc, &c) != 5)
 	fatal("bad TLB parms: <name>:<nsets>:<page_size>:<assoc>:<repl>");
+
+			/* cs203A */
       itlb = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			  /* usize */sizeof(md_addr_t), assoc,
 			  cache_char2policy(c), itlb_access_fn,
-			  /* hit latency */1);
+			  /* hit latency */1, 0);
     }
 
   /* use a D-TLB? */
@@ -1170,10 +1182,12 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
       if (sscanf(dtlb_opt, "%[^:]:%d:%d:%d:%c",
 		 name, &nsets, &bsize, &assoc, &c) != 5)
 	fatal("bad TLB parms: <name>:<nsets>:<page_size>:<assoc>:<repl>");
+
+			/* cs203A */
       dtlb = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			  /* usize */sizeof(md_addr_t), assoc,
 			  cache_char2policy(c), dtlb_access_fn,
-			  /* hit latency */1);
+			  /* hit latency */1, 0);
     }
 
   if (cache_dl1_lat < 1)
@@ -1205,25 +1219,25 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
   if (res_ialu > MAX_INSTS_PER_CLASS)
     fatal("number of integer ALU's must be <= MAX_INSTS_PER_CLASS");
   fu_config[FU_IALU_INDEX].quantity = res_ialu;
-  
+
   if (res_imult < 1)
     fatal("number of integer multiplier/dividers must be greater than zero");
   if (res_imult > MAX_INSTS_PER_CLASS)
     fatal("number of integer mult/div's must be <= MAX_INSTS_PER_CLASS");
   fu_config[FU_IMULT_INDEX].quantity = res_imult;
-  
+
   if (res_memport < 1)
     fatal("number of memory system ports must be greater than zero");
   if (res_memport > MAX_INSTS_PER_CLASS)
     fatal("number of memory system ports must be <= MAX_INSTS_PER_CLASS");
   fu_config[FU_MEMPORT_INDEX].quantity = res_memport;
-  
+
   if (res_fpalu < 1)
     fatal("number of floating point ALU's must be greater than zero");
   if (res_fpalu > MAX_INSTS_PER_CLASS)
     fatal("number of floating point ALU's must be <= MAX_INSTS_PER_CLASS");
   fu_config[FU_FPALU_INDEX].quantity = res_fpalu;
-  
+
   if (res_fpmult < 1)
     fatal("number of floating point multiplier/dividers must be > zero");
   if (res_fpmult > MAX_INSTS_PER_CLASS)
@@ -2283,7 +2297,7 @@ ruu_commit(void)
 	  /* invalidate load/store operation instance */
 	  LSQ[LSQ_head].tag++;
           sim_slip += (sim_cycle - LSQ[LSQ_head].slip);
-   
+
 	  /* indicate to pipeline trace that this instruction retired */
 	  ptrace_newstage(LSQ[LSQ_head].ptrace_seq, PST_COMMIT, events);
 	  ptrace_endinst(LSQ[LSQ_head].ptrace_seq);
@@ -2296,7 +2310,7 @@ ruu_commit(void)
       /* Wattch -- committed instruction to arch reg file */
       if ((MD_OP_FLAGS(rs->op) & (F_ICOMP|F_FCOMP)) || ((MD_OP_FLAGS(rs->op) & (F_MEM|F_LOAD)) == (F_MEM|F_LOAD))) {
 	regfile_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 	regfile_total_pop_count_cycle += pop_count(rs->val_rc);
 	regfile_num_pop_count_cycle++;
 #endif
@@ -2401,7 +2415,7 @@ ruu_recover(int branch_index)			/* index of mis-pred branch */
 	      /* blow away the consuming op list */
 	      LSQ[LSQ_index].odep_list[i] = NULL;
 	    }
-      
+
 	  /* squash this LSQ entry */
 	  LSQ[LSQ_index].tag++;
 
@@ -2421,7 +2435,7 @@ ruu_recover(int branch_index)			/* index of mis-pred branch */
 	  /* blow away the consuming op list */
 	  RUU[RUU_index].odep_list[i] = NULL;
 	}
-      
+
       /* squash this RUU entry */
       RUU[RUU_index].tag++;
 
@@ -2475,7 +2489,7 @@ ruu_writeback(void)
       /* operation has completed */
       rs->completed = TRUE;
 
-      /* Wattch -- 1) Writeback result to resultbus 
+      /* Wattch -- 1) Writeback result to resultbus
                    2) Write result to phys. regs (RUU)
 		   3) Access wakeup logic
        */
@@ -2484,7 +2498,7 @@ ruu_writeback(void)
 	window_preg_access++;
 	window_wakeup_access++;
 	resultbus_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 	window_total_pop_count_cycle += pop_count(rs->val_rc);
 	window_num_pop_count_cycle++;
 	resultbus_total_pop_count_cycle += pop_count(rs->val_rc);
@@ -2775,7 +2789,7 @@ ruu_issue(void)
 	      lsq_access++;
 	      lsq_store_data_access++;
 	      lsq_preg_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 	      lsq_total_pop_count_cycle += pop_count(rs->val_ra);
 	      lsq_num_pop_count_cycle++;
 #endif
@@ -2829,7 +2843,7 @@ ruu_issue(void)
 				      lsq_access++;
 				      lsq_preg_access++;
 				      lsq_load_data_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 				      lsq_total_pop_count_cycle += pop_count(rs->val_ra_result);
 				      lsq_num_pop_count_cycle++;
 #endif
@@ -2895,9 +2909,9 @@ ruu_issue(void)
 			}
 		      else /* !load && !store */
 			{
-			  /* Wattch -- ALU access Wattch-FIXME 
-			     (different op types) 
-			     also spread out power of multi-cycle ops 
+			  /* Wattch -- ALU access Wattch-FIXME
+			     (different op types)
+			     also spread out power of multi-cycle ops
 			  */
 			  alu_access++;
 
@@ -2910,7 +2924,7 @@ ruu_issue(void)
 			  eventq_queue_event(rs, sim_cycle + fu->oplat);
 
 			  /* entered execute stage, indicate in pipe trace */
-			  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE, 
+			  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE,
 					  rs->ea_comp ? PEV_AGEN : 0);
 			}
 
@@ -2919,7 +2933,7 @@ ruu_issue(void)
 		      /* read values from window send to FUs */
 		      window_preg_access++;
 		      window_preg_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 	      window_total_pop_count_cycle += pop_count(rs->val_ra) + pop_count(rs->val_rb);
 	      window_num_pop_count_cycle+=2;
 #endif
@@ -2953,7 +2967,7 @@ ruu_issue(void)
 		  /* read values from window send to FUs */
 		  window_preg_access++;
 		  window_preg_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 	      window_total_pop_count_cycle += pop_count(rs->val_ra) + pop_count(rs->val_rb);
 	      window_num_pop_count_cycle+=2;
 #endif
@@ -3465,7 +3479,7 @@ ruu_link_idep(struct RUU_station *rs,		/* rs station to link */
 
       /* Wattch -- regfile access (value from arch regfile) */
       regfile_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
       if(idep_num == 0)
 	regfile_total_pop_count_cycle += pop_count(rs->val_ra);
       else
@@ -4200,14 +4214,14 @@ ruu_dispatch(void)
 		  /* Wattch -- both operands ready, 2 window write accesses */
 		  /* Wattch -- FIXME: currently being read from arch.
 		     regfile (in ruu_link_idep) and written to window here.
-		     should these values be read from arch. regfile or 
+		     should these values be read from arch. regfile or
 		     another window entry? */
 		  window_access++;
 		  window_access++;
 		  window_preg_access++;
 		  window_preg_access++;
 
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 		  regfile_total_pop_count_cycle += pop_count(rs->val_ra);
 		  regfile_total_pop_count_cycle += pop_count(rs->val_rb);
 		  regfile_num_pop_count_cycle+=2;
@@ -4221,7 +4235,7 @@ ruu_dispatch(void)
 		  /* Wattch -- one operand ready, 1 window write accesses */
 		  window_access++;
 		  window_preg_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 		  if(rs->idep_ready[0])
 		    regfile_total_pop_count_cycle += pop_count(rs->val_ra);
 		  else
@@ -4272,7 +4286,7 @@ ruu_dispatch(void)
 		  window_preg_access++;
 		  window_preg_access++;
 
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 		  regfile_total_pop_count_cycle += pop_count(rs->val_ra);
 		  regfile_total_pop_count_cycle += pop_count(rs->val_rb);
 		  regfile_num_pop_count_cycle+=2;
@@ -4290,7 +4304,7 @@ ruu_dispatch(void)
 		  */
 		  window_access++;
 		  window_preg_access++;
-#ifdef DYNAMIC_AF	
+#ifdef DYNAMIC_AF
 		  if(rs->idep_ready[0])
 		    regfile_total_pop_count_cycle += pop_count(rs->val_ra);
 		  else
@@ -4550,7 +4564,7 @@ ruu_fetch(void)
 
 	  /* pre-decode instruction, used for bpred stats recording */
 	  MD_SET_OPCODE(op, inst);
-	  
+
 	  /* get the next predicted fetch address; only use branch predictor
 	     result for branches (assumes pre-decode bits); NOTE: returned
 	     value may be 1 if bpred can only predict a direction */

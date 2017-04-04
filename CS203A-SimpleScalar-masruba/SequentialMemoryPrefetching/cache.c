@@ -2,20 +2,20 @@
 
 /* SimpleScalar(TM) Tool Suite
  * Copyright (C) 1994-2003 by Todd M. Austin, Ph.D. and SimpleScalar, LLC.
- * All Rights Reserved. 
- * 
+ * All Rights Reserved.
+ *
  * THIS IS A LEGAL DOCUMENT, BY USING SIMPLESCALAR,
  * YOU ARE AGREEING TO THESE TERMS AND CONDITIONS.
- * 
+ *
  * No portion of this work may be used by any commercial entity, or for any
  * commercial purpose, without the prior, written permission of SimpleScalar,
  * LLC (info@simplescalar.com). Nonprofit and noncommercial use is permitted
  * as described below.
- * 
+ *
  * 1. SimpleScalar is provided AS IS, with no warranty of any kind, express
  * or implied. The user of the program accepts full responsibility for the
  * application of the program and the use of any results.
- * 
+ *
  * 2. Nonprofit and noncommercial use is encouraged. SimpleScalar may be
  * downloaded, compiled, executed, copied, and modified solely for nonprofit,
  * educational, noncommercial research, and noncommercial scholarship
@@ -24,13 +24,13 @@
  * solely for nonprofit, educational, noncommercial research, and
  * noncommercial scholarship purposes provided that this notice in its
  * entirety accompanies all copies.
- * 
+ *
  * 3. ALL COMMERCIAL USE, AND ALL USE BY FOR PROFIT ENTITIES, IS EXPRESSLY
  * PROHIBITED WITHOUT A LICENSE FROM SIMPLESCALAR, LLC (info@simplescalar.com).
- * 
+ *
  * 4. No nonprofit user may place any restrictions on the use of this software,
  * including as modified by the user, by any other authorized user.
- * 
+ *
  * 5. Noncommercial and nonprofit users may distribute copies of SimpleScalar
  * in compiled or executable form as set forth in Section 2, provided that
  * either: (A) it is accompanied by the corresponding machine-readable source
@@ -40,11 +40,11 @@
  * must permit verbatim duplication by anyone, or (C) it is distributed by
  * someone who received only the executable form, and is accompanied by a
  * copy of the written offer of source code.
- * 
+ *
  * 6. SimpleScalar was developed by Todd M. Austin, Ph.D. The tool suite is
  * currently maintained by SimpleScalar LLC (info@simplescalar.com). US Mail:
  * 2395 Timbercrest Court, Ann Arbor, MI 48105.
- * 
+ *
  * Copyright (C) 1994-2003 by Todd M. Austin, Ph.D. and SimpleScalar, LLC.
  */
 
@@ -270,7 +270,9 @@ cache_create(char *name,		/* name of the cache */
 					   md_addr_t baddr, int bsize,
 					   struct cache_blk_t *blk,
 					   tick_t now),
-	     unsigned int hit_latency)	/* latency in cycles for a hit */
+	     unsigned int hit_latency,	/* latency in cycles for a hit */
+	     /* cs203A */
+	     int prefetch_blk_count)  /* number of extra blocks to prefetch on cache miss, should be 0,1,2 or 4 */
 {
   struct cache_t *cp;
   struct cache_blk_t *blk;
@@ -311,6 +313,18 @@ cache_create(char *name,		/* name of the cache */
   cp->policy = policy;
   cp->hit_latency = hit_latency;
 
+  /* cs203A */
+  /* Check prefetch block count and set it: */
+/*
+  if (prefetch_blk_count != 0 && prefetch_blk_count != 1 &&
+			prefetch_blk_count != 2 && prefetch_blk_count != 4) {
+		fatal("cs203A: invalid prefetch block count");
+	} 
+*/
+//	else {
+		cp->prefetch_blk_count = prefetch_blk_count;
+//	}
+
   /* miss/replacement functions */
   cp->blk_access_fn = blk_access_fn;
 
@@ -338,6 +352,9 @@ cache_create(char *name,		/* name of the cache */
   cp->replacements = 0;
   cp->writebacks = 0;
   cp->invalidations = 0;
+  /* cs203A */
+  cp->prefetch_hits = 0;
+  cp->prefetch_misses = 0;
 
   /* blow away the last block accessed */
   cp->last_tagset = 0;
@@ -368,7 +385,7 @@ cache_create(char *name,		/* name of the cache */
 	 otherwise, block accesses through SET->BLKS will fail (used
 	 during random replacement selection) */
       cp->sets[i].blks = CACHE_BINDEX(cp, cp->data, bindex);
-      
+
       /* link the data blocks into ordered way chain and hash table bucket
          chains, if hash table exists */
       for (j=0; j<assoc; j++)
@@ -462,6 +479,13 @@ cache_reg_stats(struct cache_t *cp,	/* cache instance */
   sprintf(buf, "%s.miss_rate", name);
   sprintf(buf1, "%s.misses / %s.accesses", name, name);
   stat_reg_formula(sdb, buf, "miss rate (i.e., misses/ref)", buf1, NULL);
+
+	/* cs203A */
+  sprintf(buf, "%s.prefetch_hits", name);
+  stat_reg_counter(sdb, buf, "total number of prefetch hits", &cp->prefetch_hits, 0, NULL);
+  sprintf(buf, "%s.prefetch_misses", name);
+  stat_reg_counter(sdb, buf, "total number of prefetch misses", &cp->prefetch_misses, 0, NULL);
+
   sprintf(buf, "%s.repl_rate", name);
   sprintf(buf1, "%s.replacements / %s.accesses", name, name);
   stat_reg_formula(sdb, buf, "replacement rate (i.e., repls/ref)", buf1, NULL);
@@ -512,6 +536,8 @@ cache_access(struct cache_t *cp,	/* cache to access */
   md_addr_t bofs = CACHE_BLK(cp, addr);
   struct cache_blk_t *blk, *repl;
   int lat = 0;
+  /* cs203A */
+	int fetch_counter = 0;
 
   /* default replacement address */
   if (repl_addr)
@@ -536,7 +562,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
       blk = cp->last_blk;
       goto cache_fast_hit;
     }
-    
+
   if (cp->hsize)
     {
       /* higly-associativity cache, access through the per-set hash tables */
@@ -566,6 +592,11 @@ cache_access(struct cache_t *cp,	/* cache to access */
 
   /* **MISS** */
   cp->misses++;
+
+  /* cs203A */
+	for (fetch_counter = 1; fetch_counter <= cp->prefetch_blk_count; ++fetch_counter) {
+		cache_prefetch_block(cp, addr + fetch_counter * cp->bsize, 0);
+	}
 
   /* select the appropriate block to replace, and re-link this entry to
      the appropriate place in the way list */
@@ -599,14 +630,14 @@ cache_access(struct cache_t *cp,	/* cache to access */
       cp->replacements++;
 
       if (repl_addr)
-	*repl_addr = CACHE_MK_BADDR(cp, repl->tag, set);
- 
+				*repl_addr = CACHE_MK_BADDR(cp, repl->tag, set);
+
       /* don't replace the block until outstanding misses are satisfied */
       lat += BOUND_POS(repl->ready - now);
- 
+
       /* stall until the bus to next level of memory is available */
       lat += BOUND_POS(cp->bus_free - (now + lat));
- 
+
       /* track bus resource usage */
       cp->bus_free = MAX(cp->bus_free, (now + lat)) + 1;
 
@@ -654,7 +685,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
 
 
  cache_hit: /* slow hit handler */
-  
+
   /* **HIT** */
   cp->hits++;
 
@@ -689,7 +720,7 @@ cache_access(struct cache_t *cp,	/* cache to access */
   return (int) MAX(cp->hit_latency, (blk->ready - now));
 
  cache_fast_hit: /* fast hit handler */
-  
+
   /* **FAST HIT** */
   cp->hits++;
 
@@ -719,6 +750,125 @@ cache_access(struct cache_t *cp,	/* cache to access */
   return (int) MAX(cp->hit_latency, (blk->ready - now));
 }
 
+/* cs203A */
+/* ... prefetches addr block */
+unsigned int				/* latency of access in cycles */
+cache_prefetch_block(struct cache_t *cp,	/* cache to access */
+	     md_addr_t addr,		/* address of prefetch */
+	     tick_t now		/* time of access */
+) 
+{
+	unsigned int lat = 0;
+	struct cache_blk_t *blk, *repl;
+  md_addr_t tag = CACHE_TAG(cp, addr);
+  md_addr_t set = CACHE_SET(cp, addr);
+  md_addr_t bofs = CACHE_BLK(cp, addr);
+
+  /* check for a fast hit: access to same block */
+//  if (CACHE_TAGSET(cp, addr) == cp->last_tagset) {
+//		/* hit in the same block */
+//		cp->prefetch_hits++;
+//		return lat;
+//	}
+
+  if (cp->hsize) {
+		/* higly-associativity cache, access through the per-set hash tables */
+		int hindex = CACHE_HASH(cp, tag);
+
+		for (blk=cp->sets[set].hash[hindex]; blk; blk=blk->hash_next) {
+			if (blk->tag == tag && (blk->status & CACHE_BLK_VALID)) {
+				cp->prefetch_hits++;
+				return cp->hit_latency;
+			}
+		}
+	}
+  else {
+		/* low-associativity cache, linear search the way list */
+		for (blk=cp->sets[set].way_head; blk; blk=blk->way_next) {
+			if (blk->tag == tag && (blk->status & CACHE_BLK_VALID)) {
+				cp->prefetch_hits++;
+				return cp->hit_latency;
+			}
+		}
+	}
+
+  /* cache prefetch block not found */
+
+  /* **MISS** */
+  cp->prefetch_misses++;
+
+  /* select the appropriate block to replace, and re-link this entry to
+     the appropriate place in the way list */
+  switch (cp->policy) {
+  case LRU:
+  case FIFO:
+    repl = cp->sets[set].way_tail;
+    update_way_list(&cp->sets[set], repl, Head);
+    break;
+  case Random:
+    {
+      int bindex = myrand() & (cp->assoc - 1);
+      repl = CACHE_BINDEX(cp, cp->sets[set].blks, bindex);
+    }
+    break;
+  default:
+    panic("bogus replacement policy");
+  }
+
+  /* remove this block from the hash bucket chain, if hash exists */
+  if (cp->hsize)
+    unlink_htab_ent(cp, &cp->sets[set], repl);
+
+  /* blow away the last block to hit */
+//  cp->last_tagset = 0; /////////// ?
+//  cp->last_blk = NULL; /////////// ?
+
+  /* write back replaced block data */
+  if (repl->status & CACHE_BLK_VALID) {
+		cp->replacements++;
+
+
+		//if (repl_addr) {
+			//*repl_addr = CACHE_MK_BADDR(cp, repl->tag, set);
+		//}
+
+		/* don't replace the block until outstanding misses are satisfied */
+		lat += BOUND_POS(repl->ready - now);
+
+		/* stall until the bus to next level of memory is available */
+		lat += BOUND_POS(cp->bus_free - (now + lat));
+
+		/* track bus resource usage */
+		cp->bus_free = MAX(cp->bus_free, (now + lat)) + 1;
+
+		if (repl->status & CACHE_BLK_DIRTY) {
+			/* write back the cache block */
+			cp->writebacks++;
+			lat += cp->blk_access_fn(Write,
+															 CACHE_MK_BADDR(cp, repl->tag, set),
+															 cp->bsize, repl, now + lat);
+		}
+	}
+
+  /* update block tags */
+  repl->tag = tag;
+  repl->status = CACHE_BLK_VALID;	/* dirty bit set on update */
+
+  /* read data block */
+  lat += cp->blk_access_fn(Read, CACHE_BADDR(cp, addr), cp->bsize,
+													 repl, now+lat);
+
+  /* update block status */
+  repl->ready = now+lat;
+
+  /* link this entry back into the hash table */
+  if (cp->hsize)
+    link_htab_ent(cp, &cp->sets[set], repl);
+
+  /* return latency of the operation */
+  return lat;
+}
+
 /* return non-zero if block containing address ADDR is contained in cache
    CP, this interface is used primarily for debugging and asserting cache
    invariants */
@@ -736,11 +886,11 @@ cache_probe(struct cache_t *cp,		/* cache instance to probe */
   {
     /* higly-associativity cache, access through the per-set hash tables */
     int hindex = CACHE_HASH(cp, tag);
-    
+
     for (blk=cp->sets[set].hash[hindex];
 	 blk;
 	 blk=blk->hash_next)
-    {	
+    {
       if (blk->tag == tag && (blk->status & CACHE_BLK_VALID))
 	  return TRUE;
     }
@@ -756,7 +906,7 @@ cache_probe(struct cache_t *cp,		/* cache instance to probe */
 	  return TRUE;
     }
   }
-  
+
   /* cache block not found */
   return FALSE;
 }
