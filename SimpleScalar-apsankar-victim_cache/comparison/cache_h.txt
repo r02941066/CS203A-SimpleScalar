@@ -1,0 +1,9 @@
+101. enum Set_Type
+112. BIP
+139. byte_t data;
+183. md_addr_t repladdr
+205. counter_t read_hits;
+215. md_addr_t last_blk_addr;
+237. tick_t now, md_addr_t repladdr
+277. unsigned int
+
