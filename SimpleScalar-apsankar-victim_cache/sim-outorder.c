@@ -73,9 +73,6 @@
 #include "dlite.h"
 #include "sim.h"
 
-/* added for Wattch */
-#include "power.h"
-
 /*
  * This file implements a very detailed out-of-order issue superscalar
  * processor with a two-level memory system and speculative execution support.
@@ -118,32 +115,32 @@ static char *pred_type;
 
 /* bimodal predictor config (<table_size>) */
 static int bimod_nelt = 1;
-int bimod_config[1] =
+static int bimod_config[1] =
   { /* bimod tbl size */2048 };
 
 /* 2-level predictor config (<l1size> <l2size> <hist_size> <xor>) */
 static int twolev_nelt = 4;
-int twolev_config[4] =
+static int twolev_config[4] =
   { /* l1size */1, /* l2size */1024, /* hist */8, /* xor */FALSE};
 
 /* combining predictor config (<meta_table_size> */
 static int comb_nelt = 1;
-int comb_config[1] =
+static int comb_config[1] =
   { /* meta_table_size */1024 };
 
 /* return address stack (RAS) size */
-int ras_size = 8;
+static int ras_size = 8;
 
 /* BTB predictor config (<num_sets> <associativity>) */
 static int btb_nelt = 2;
-int btb_config[2] =
+static int btb_config[2] =
   { /* nsets */512, /* assoc */4 };
 
 /* instruction decode B/W (insts/cycle) */
-int ruu_decode_width;
+static int ruu_decode_width;
 
 /* instruction issue B/W (insts/cycle) */
-int ruu_issue_width;
+static int ruu_issue_width;
 
 /* run pipeline with in-order issue */
 static int ruu_inorder_issue;
@@ -152,16 +149,22 @@ static int ruu_inorder_issue;
 static int ruu_include_spec = TRUE;
 
 /* instruction commit B/W (insts/cycle) */
-int ruu_commit_width;
+static int ruu_commit_width;
 
 /* register update unit (RUU) size */
-int RUU_size = 8;
+static int RUU_size = 8;
 
 /* load/store queue (LSQ) size */
-int LSQ_size = 4;
+static int LSQ_size = 4;
+
+//Victim config
+static char *cache_vic_opt;
 
 /* l1 data cache config, i.e., {<config>|none} */
 static char *cache_dl1_opt;
+
+//Victim hit latency
+static int cache_vic_lat;
 
 /* l1 data cache hit latency (in cycles) */
 static int cache_dl1_lat;
@@ -208,56 +211,19 @@ static char *dtlb_opt;
 static int tlb_miss_lat;
 
 /* total number of integer ALU's available */
-int res_ialu;
+static int res_ialu;
 
 /* total number of integer multiplier/dividers available */
 static int res_imult;
 
 /* total number of memory system ports available (to CPU) */
-int res_memport;
+static int res_memport;
 
 /* total number of floating point ALU's available */
-int res_fpalu;
+static int res_fpalu;
 
 /* total number of floating point multiplier/dividers available */
 static int res_fpmult;
-
-/* options for Wattch */
-int data_width = 64;
-
-/* static power model results */
-extern power_result_type power;
-
-/* counters added for Wattch */
-counter_t rename_access=0;
-counter_t bpred_access=0;
-counter_t window_access=0;
-counter_t lsq_access=0;
-counter_t regfile_access=0;
-counter_t icache_access=0;
-counter_t dcache_access=0;
-counter_t dcache2_access=0;
-counter_t alu_access=0;
-counter_t ialu_access=0;
-counter_t falu_access=0;
-counter_t resultbus_access=0;
-
-counter_t window_preg_access=0;
-counter_t window_selection_access=0;
-counter_t window_wakeup_access=0;
-counter_t lsq_store_data_access=0;
-counter_t lsq_load_data_access=0;
-counter_t lsq_preg_access=0;
-counter_t lsq_wakeup_access=0;
-
-counter_t window_total_pop_count_cycle=0;
-counter_t window_num_pop_count_cycle=0;
-counter_t lsq_total_pop_count_cycle=0;
-counter_t lsq_num_pop_count_cycle=0;
-counter_t regfile_total_pop_count_cycle=0;
-counter_t regfile_num_pop_count_cycle=0;
-counter_t resultbus_total_pop_count_cycle=0;
-counter_t resultbus_num_pop_count_cycle=0;
 
 /* text-based stat profiles */
 #define MAX_PCSTAT_VARS 8
@@ -408,22 +374,25 @@ static char *bpred_spec_opt;
 static enum { spec_ID, spec_WB, spec_CT } bpred_spec_update;
 
 /* level 1 instruction cache, entry level instruction cache */
-struct cache_t *cache_il1;
+static struct cache_t *cache_il1;
 
 /* level 1 instruction cache */
 static struct cache_t *cache_il2;
 
+//Victim cache
+static struct cache_t *cache_vic;
+
 /* level 1 data cache, entry level data cache */
-struct cache_t *cache_dl1;
+static struct cache_t *cache_dl1;
 
 /* level 2 data cache */
-struct cache_t *cache_dl2;
+static struct cache_t *cache_dl2;
 
 /* instruction TLB */
-struct cache_t *itlb;
+static struct cache_t *itlb;
 
 /* data TLB */
-struct cache_t *dtlb;
+static struct cache_t *dtlb;
 
 /* branch predictor */
 static struct bpred_t *pred;
@@ -470,26 +439,33 @@ dl1_access_fn(enum mem_cmd cmd,		/* access cmd, Read or Write */
 	      md_addr_t baddr,		/* block address to access */
 	      int bsize,		/* size of block to access */
 	      struct cache_blk_t *blk,	/* ptr to block in upper level */
-	      tick_t now)		/* time of access */
-{
-  unsigned int lat;
+	      tick_t now,    /* time of access */
+        md_addr_t rep_addr)
+{ 
+  assert(cmd == Read);
+  unsigned int lat=0;
+  if (cache_vic && cache_dl1->last_blk_addr !=0)
+  {
+       if (cache_probe(cache_vic, baddr) != 0)
+    {
+      cache_dl1->misses--;
+      cache_dl1->hits++;
+      lat = vic_cache_access(cache_vic, cmd, baddr, NULL, bsize,
+                        now, NULL, /* repl addr */NULL, blk, rep_addr);
+      return lat;
+    } //victim miss
+       vic_cache_access(cache_vic, cmd, baddr, NULL, bsize,
+                        now, NULL, /* repl addr */NULL, blk, rep_addr);
+        //Not concerned with the latency that the above vic_cache_access returns
+  }
+ //If victim hit, swap and return latency. If victim miss, replace and continue.
 
-  if (cache_dl2)
+  if (cache_dl2)  // Write will never be passed to dl1 access fn,since the lru block in dl1 put in victim regardless.
     {
       /* access next level of data cache hierarchy */
       lat = cache_access(cache_dl2, cmd, baddr, NULL, bsize,
 			 /* now */now, /* pudata */NULL, /* repl addr */NULL);
-
-      /* Wattch -- Dcache2 access */
-      dcache2_access++;
-
-      if (cmd == Read)
-	return lat;
-      else
-	{
-	  /* FIXME: unlimited write buffers */
-	  return 0;
-	}
+	   return lat;
     }
   else
     {
@@ -504,17 +480,43 @@ dl1_access_fn(enum mem_cmd cmd,		/* access cmd, Read or Write */
     }
 }
 
+/* Victim cache block miss handler function, is always called only to write back dirty blocks to L2, 
+or in some cases, memory. */
+
+static unsigned int     /* latency of block access */
+vic_access_fn(enum mem_cmd cmd,   /* access cmd, Read or Write */
+        md_addr_t baddr,    /* block address to access */
+        int bsize,    /* size of block to access */
+        struct cache_blk_t *blk,  /* ptr to block in upper level */
+        tick_t now,
+        md_addr_t rep_addr
+        )   /* time of access */
+{
+  assert (cmd == Write);
+   if (cache_dl2)
+    {
+      /* access next level of data cache hierarchy */
+       cache_access(cache_dl2, cmd, baddr, NULL, bsize,
+       /* now */now, /* pudata */NULL, /* repl addr */NULL);
+     return 0;
+    }
+  else
+    {
+      /* access main memory */
+       return 0;
+    }
+}
+
+
 /* l2 data cache block miss handler function */
 static unsigned int			/* latency of block access */
 dl2_access_fn(enum mem_cmd cmd,		/* access cmd, Read or Write */
 	      md_addr_t baddr,		/* block address to access */
 	      int bsize,		/* size of block to access */
 	      struct cache_blk_t *blk,	/* ptr to block in upper level */
-	      tick_t now)		/* time of access */
+	      tick_t now,
+        md_addr_t rep_addr)		/* time of access */
 {
-
-  /* Wattch -- main memory access -- Wattch-FIXME (offchip) */
-
   /* this is a miss to the lowest level, so access main memory */
   if (cmd == Read)
     return mem_access_latency(bsize);
@@ -540,10 +542,6 @@ if (cache_il2)
       /* access next level of inst cache hierarchy */
       lat = cache_access(cache_il2, cmd, baddr, NULL, bsize,
 			 /* now */now, /* pudata */NULL, /* repl addr */NULL);
-
-      /* Wattch -- Dcache2 access */
-      dcache2_access++;
-
       if (cmd == Read)
 	return lat;
       else
@@ -567,8 +565,6 @@ il2_access_fn(enum mem_cmd cmd,		/* access cmd, Read or Write */
 	      struct cache_blk_t *blk,	/* ptr to block in upper level */
 	      tick_t now)		/* time of access */
 {
-  /* Wattch -- main memory access -- Wattch-FIXME (offchip) */
-
   /* this is a miss to the lowest level, so access main memory */
   if (cmd == Read)
     return mem_access_latency(bsize);
@@ -788,9 +784,19 @@ sim_reg_options(struct opt_odb_t *odb)
 
   /* cache options */
 
+  opt_reg_string(odb, "-cache:vic",
+     "l1 data cache config, i.e., {<config>|none}",
+     &cache_vic_opt, "vic:1:32:16:l",
+     /* print */TRUE, NULL);
+
+ opt_reg_int(odb, "-cache:viclat",
+     "Victim (for DL1) latency (in cycles)",
+     &cache_vic_lat, /* default */1,
+    /* print */TRUE, /* format */NULL);
+  
   opt_reg_string(odb, "-cache:dl1",
 		 "l1 data cache config, i.e., {<config>|none}",
-		 &cache_dl1_opt, "dl1:128:32:4:l",
+		 &cache_dl1_opt, "dl1:64:32:1:l",
 		 /* print */TRUE, NULL);
 
   opt_reg_note(odb,
@@ -802,7 +808,7 @@ sim_reg_options(struct opt_odb_t *odb)
 "    <nsets>  - number of sets in the cache\n"
 "    <bsize>  - block size of the cache\n"
 "    <assoc>  - associativity of the cache\n"
-"    <repl>   - block replacement strategy, 'l'-LRU, 'f'-FIFO, 'r'-random\n"
+"    <repl>   - block replacement strategy, 'l'-LRU, 'f'-FIFO, 'r'-random, 'b'-BIP, 'd'-DIP\n"
 "\n"
 "    Examples:   -cache:dl1 dl1:4096:32:1:l\n"
 "                -dtlb dtlb:128:4096:32:r\n"
@@ -815,7 +821,7 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-cache:dl2",
 		 "l2 data cache config, i.e., {<config>|none}",
-		 &cache_dl2_opt, "ul2:1024:64:4:l",
+		 &cache_dl2_opt, "ul2:512:64:4:b",
 		 /* print */TRUE, NULL);
 
   opt_reg_int(odb, "-cache:dl2lat",
@@ -825,7 +831,7 @@ sim_reg_options(struct opt_odb_t *odb)
 
   opt_reg_string(odb, "-cache:il1",
 		 "l1 inst cache config, i.e., {<config>|dl1|dl2|none}",
-		 &cache_il1_opt, "il1:512:32:1:l",
+		 &cache_il1_opt, "il1:64:32:1:l",
 		 /* print */TRUE, NULL);
 
   opt_reg_note(odb,
@@ -1057,6 +1063,9 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
     {
       cache_dl1 = NULL;
 
+      if (strcmp(cache_vic_opt, "none"))
+  fatal("the l1 data cache must defined if the Victim cache is defined");
+      cache_vic = NULL; 
       /* the level 2 D-cache cannot be defined */
       if (strcmp(cache_dl2_opt, "none"))
 	fatal("the l1 data cache must defined if the l2 cache is defined");
@@ -1070,6 +1079,20 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
       cache_dl1 = cache_create(name, nsets, bsize, /* balloc */FALSE,
 			       /* usize */0, assoc, cache_char2policy(c),
 			       dl1_access_fn, /* hit lat */cache_dl1_lat);
+
+  /* Is the Victim cache (to DL1) Defined? */
+      if (!mystricmp(cache_vic_opt, "none"))
+  cache_vic = NULL;
+      else
+  {
+    if (sscanf(cache_vic_opt, "%[^:]:%d:%d:%d:%c",
+         name, &nsets, &bsize, &assoc, &c) != 5)
+      fatal("bad Victim D-cache parms: "
+      "<name>:<nsets>:<bsize>:<assoc>:<repl>");
+    cache_vic = cache_create(name, nsets, bsize, /* balloc */FALSE,
+           /* usize */0, assoc, cache_char2policy(c),
+           vic_access_fn, /* hit lat */cache_vic_lat);
+  }
 
       /* is the level 2 D-cache defined? */
       if (!mystricmp(cache_dl2_opt, "none"))
@@ -1090,7 +1113,6 @@ sim_check_options(struct opt_odb_t *odb,        /* options database */
   if (!mystricmp(cache_il1_opt, "none"))
     {
       cache_il1 = NULL;
-
       /* the level 2 I-cache cannot be defined */
       if (strcmp(cache_il2_opt, "none"))
 	fatal("the l1 inst cache must defined if the l2 cache is defined");
@@ -1359,6 +1381,8 @@ sim_reg_stats(struct stat_sdb_t *sdb)   /* stats database */
     cache_reg_stats(cache_il2, sdb);
   if (cache_dl1)
     cache_reg_stats(cache_dl1, sdb);
+  if (cache_vic)
+    cache_reg_stats(cache_vic, sdb);
   if (cache_dl2)
     cache_reg_stats(cache_dl2, sdb);
   if (itlb)
@@ -1366,14 +1390,10 @@ sim_reg_stats(struct stat_sdb_t *sdb)   /* stats database */
   if (dtlb)
     cache_reg_stats(dtlb, sdb);
 
-  /* register power stats */
-  power_reg_stats(sdb);
-
   /* debug variable(s) */
   stat_reg_counter(sdb, "sim_invalid_addrs",
 		   "total non-speculative bogus addresses seen (debug var)",
                    &sim_invalid_addrs, /* initial value */0, /* format */NULL);
-
   for (i=0; i<pcstat_nelt; i++)
     {
       char buf[512], buf1[512];
@@ -1430,9 +1450,6 @@ sim_init(void)
   /* allocate and initialize memory space */
   mem = mem_create("mem");
   mem_init(mem);
-
-  /* compute static power estimates */
-  calculate_power(&power);
 }
 
 /* default register state accessor, used by DLite */
@@ -1568,10 +1585,6 @@ struct RUU_station {
   int queued;				/* operands ready and queued */
   int issued;				/* operation is/was executing */
   int completed;			/* operation has completed execution */
-
-  /* Wattch: values of source operands and result operand used for AF generation */
-  quad_t val_ra, val_rb, val_rc, val_ra_result;
-
   /* output operand dependency list, these lists are used to
      limit the number of associative searches into the RUU when
      instructions complete and need to wake up dependent insts */
@@ -1590,10 +1603,6 @@ struct RUU_station {
 /* non-zero if all register operands are ready, update with MAX_IDEPS */
 #define OPERANDS_READY(RS)                                              \
   ((RS)->idep_ready[0] && (RS)->idep_ready[1] && (RS)->idep_ready[2])
-
-/* non-zero if one register operands is ready, update with MAX_IDEPS */
-#define ONE_OPERANDS_READY(RS)                                              \
-  ((RS)->idep_ready[0] || (RS)->idep_ready[1])
 
 /* register update unit, combination of reservation stations and reorder
    buffer device, organized as a circular queue */
@@ -2251,12 +2260,9 @@ ruu_commit(void)
 		  /* go to the data cache */
 		  if (cache_dl1)
 		    {
-  		      /* Wattch -- D-cache access */
-		      dcache_access++;
-
-              /* commit store value to D-cache */
+		      /* commit store value to D-cache */
 		      lat =
-			cache_access(cache_dl1, Write, (LSQ[LSQ_head].addr&~3),
+			dl1_cache_access(cache_dl1, Write, (LSQ[LSQ_head].addr&~3),
 				     NULL, 4, sim_cycle, NULL, NULL);
 		      if (lat > cache_dl1_lat)
 			events |= PEV_CACHEMISS;
@@ -2293,22 +2299,10 @@ ruu_commit(void)
 	  LSQ_num--;
 	}
 
-      /* Wattch -- committed instruction to arch reg file */
-      if ((MD_OP_FLAGS(rs->op) & (F_ICOMP|F_FCOMP)) || ((MD_OP_FLAGS(rs->op) & (F_MEM|F_LOAD)) == (F_MEM|F_LOAD))) {
-	regfile_access++;
-#ifdef DYNAMIC_AF	
-	regfile_total_pop_count_cycle += pop_count(rs->val_rc);
-	regfile_num_pop_count_cycle++;
-#endif
-      }
-
       if (pred
 	  && bpred_spec_update == spec_CT
 	  && (MD_OP_FLAGS(rs->op) & F_CTRL))
 	{
-	  /* Wattch -- bpred access */
-	  bpred_access++;
-
 	  bpred_update(pred,
 		       /* branch address */rs->PC,
 		       /* actual target address */rs->next_PC,
@@ -2475,23 +2469,6 @@ ruu_writeback(void)
       /* operation has completed */
       rs->completed = TRUE;
 
-      /* Wattch -- 1) Writeback result to resultbus 
-                   2) Write result to phys. regs (RUU)
-		   3) Access wakeup logic
-       */
-      if(!(MD_OP_FLAGS(rs->op) & F_CTRL)) {
-	window_access++;
-	window_preg_access++;
-	window_wakeup_access++;
-	resultbus_access++;
-#ifdef DYNAMIC_AF	
-	window_total_pop_count_cycle += pop_count(rs->val_rc);
-	window_num_pop_count_cycle++;
-	resultbus_total_pop_count_cycle += pop_count(rs->val_rc);
-	resultbus_num_pop_count_cycle++;
-#endif
-      }
-
       /* does this operation reveal a mis-predicted branch? */
       if (rs->recover_inst)
 	{
@@ -2515,8 +2492,6 @@ ruu_writeback(void)
 	  && !rs->in_LSQ
 	  && (MD_OP_FLAGS(rs->op) & F_CTRL))
 	{
-	  /* Wattch -- bpred access */
-	  bpred_access++;
 	  bpred_update(pred,
 		       /* branch address */rs->PC,
 		       /* actual target address */rs->next_PC,
@@ -2744,9 +2719,6 @@ ruu_issue(void)
 	      || rs->issued || rs->completed)
 	    panic("issued inst !ready, issued, or completed");
 
-	  /* Wattch -- access window selection logic */
-	  window_selection_access++;
-
 	  /* node is now un-queued */
 	  rs->queued = FALSE;
 
@@ -2770,15 +2742,6 @@ ruu_issue(void)
 
 	      /* one more inst issued */
 	      n_issued++;
-
-	      /* Wattch -- LSQ access -- write data into store buffer */
-	      lsq_access++;
-	      lsq_store_data_access++;
-	      lsq_preg_access++;
-#ifdef DYNAMIC_AF	
-	      lsq_total_pop_count_cycle += pop_count(rs->val_ra);
-	      lsq_num_pop_count_cycle++;
-#endif
 	    }
 	  else
 	    {
@@ -2804,10 +2767,6 @@ ruu_issue(void)
 			{
 			  int events = 0;
 
-			  /* Wattch -- LSQ access */
-			  lsq_access++;
-			  lsq_wakeup_access++;
-
 			  /* for loads, determine cache access latency:
 			     first scan LSQ to see if a store forward is
 			     possible, if not, access the data cache */
@@ -2826,13 +2785,6 @@ ruu_issue(void)
 				    {
 				      /* hit in the LSQ */
 				      load_lat = 1;
-				      lsq_access++;
-				      lsq_preg_access++;
-				      lsq_load_data_access++;
-#ifdef DYNAMIC_AF	
-				      lsq_total_pop_count_cycle += pop_count(rs->val_ra_result);
-				      lsq_num_pop_count_cycle++;
-#endif
 				      break;
 				    }
 
@@ -2853,11 +2805,9 @@ ruu_issue(void)
 			      /* no! go to the data cache if addr is valid */
 			      if (cache_dl1 && valid_addr)
 				{
-				  /* Wattch -- D-cache access */
-				  dcache_access++;
 				  /* access the cache if non-faulting */
 				  load_lat =
-				    cache_access(cache_dl1, Read,
+				    dl1_cache_access(cache_dl1, Read,
 						 (rs->addr & ~3), NULL, 4,
 						 sim_cycle, NULL, NULL);
 				  if (load_lat > cache_dl1_lat)
@@ -2895,17 +2845,6 @@ ruu_issue(void)
 			}
 		      else /* !load && !store */
 			{
-			  /* Wattch -- ALU access Wattch-FIXME 
-			     (different op types) 
-			     also spread out power of multi-cycle ops 
-			  */
-			  alu_access++;
-
-			  if((MD_OP_FLAGS(rs->op) & (F_FCOMP))== (F_FCOMP))
-			    falu_access++;
-			  else
-			    ialu_access++;
-
 			  /* use deterministic functional unit latency */
 			  eventq_queue_event(rs, sim_cycle + fu->oplat);
 
@@ -2913,16 +2852,6 @@ ruu_issue(void)
 			  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE, 
 					  rs->ea_comp ? PEV_AGEN : 0);
 			}
-
-		      /* Wattch -- window access */
-		      window_access++;
-		      /* read values from window send to FUs */
-		      window_preg_access++;
-		      window_preg_access++;
-#ifdef DYNAMIC_AF	
-	      window_total_pop_count_cycle += pop_count(rs->val_ra) + pop_count(rs->val_rb);
-	      window_num_pop_count_cycle+=2;
-#endif
 
 		      /* one more inst issued */
 		      n_issued++;
@@ -2947,16 +2876,6 @@ ruu_issue(void)
 		  /* entered execute stage, indicate in pipe trace */
 		  ptrace_newstage(rs->ptrace_seq, PST_EXECUTE,
 				  rs->ea_comp ? PEV_AGEN : 0);
-
-		  /* Wattch -- Window access */
-		  window_access++;
-		  /* read values from window send to FUs */
-		  window_preg_access++;
-		  window_preg_access++;
-#ifdef DYNAMIC_AF	
-	      window_total_pop_count_cycle += pop_count(rs->val_ra) + pop_count(rs->val_rb);
-	      window_num_pop_count_cycle+=2;
-#endif
 
 		  /* one more inst issued */
 		  n_issued++;
@@ -3462,17 +3381,6 @@ ruu_link_idep(struct RUU_station *rs,		/* rs station to link */
       /* no active creator, use value available in architected reg file,
          indicate the operand is ready for use */
       rs->idep_ready[idep_num] = TRUE;
-
-      /* Wattch -- regfile access (value from arch regfile) */
-      regfile_access++;
-#ifdef DYNAMIC_AF	
-      if(idep_num == 0)
-	regfile_total_pop_count_cycle += pop_count(rs->val_ra);
-      else
-	regfile_total_pop_count_cycle += pop_count(rs->val_rb);
-      regfile_num_pop_count_cycle++;
-#endif
-
       return;
     }
   /* else, creator operation will make this value sometime in the future */
@@ -3892,9 +3800,6 @@ ruu_dispatch(void)
 #endif /* HOST_HAS_QWORD */
   enum md_fault_type fault;
 
-  /* Wattch:  Added for pop count generation (AFs) */
-  qword_t val_ra, val_rb, val_rc, val_ra_result;
-
   made_check = FALSE;
   n_dispatched = 0;
   while (/* instruction decode B/W left? */
@@ -3955,15 +3860,6 @@ ruu_dispatch(void)
 
       /* default effective address (none) and access */
       addr = 0; is_write = FALSE;
-
-      /* Wattch: Get values of source operands */
-#if defined(TARGET_PISA)
-      val_ra = GPR(RS);
-      val_rb = GPR(RT);
-#elif defined(TARGET_ALPHA)
-      val_ra = GPR(RA);
-      val_rb = GPR(RB);
-#endif
 
       /* set default fault - none */
       fault = md_fault_none;
@@ -4026,15 +3922,6 @@ ruu_dispatch(void)
       if (fault != md_fault_none)
 	fatal("non-speculative fault (%d) detected @ 0x%08p",
 	      fault, regs.regs_PC);
-
-      /* Wattch: Get values of source operands */
-#if defined(TARGET_PISA)
-      val_ra = GPR(RS);
-      val_rb = GPR(RT);
-#elif defined(TARGET_ALPHA)
-      val_ra = GPR(RA);
-      val_rb = GPR(RB);
-#endif
 
       /* update memory access stats */
       if (MD_OP_FLAGS(op) & F_MEM)
@@ -4101,9 +3988,6 @@ ruu_dispatch(void)
 	     name DTMP
 	   */
 
-	  /* Wattch -- Dispatch + RAT lookup stage */
-	  rename_access++;
-
 	  /* fill in RUU reservation station */
 	  rs = &RUU[RUU_tail];
           rs->slip = sim_cycle - 1;
@@ -4122,12 +4006,6 @@ ruu_dispatch(void)
 	  rs->seq = ++inst_seq;
 	  rs->queued = rs->issued = rs->completed = FALSE;
 	  rs->ptrace_seq = pseq;
-
-	  /* Wattch: Maintain values through core for AFs*/
-	  rs->val_ra = val_ra;
-	  rs->val_rb = val_rb;
-	  rs->val_rc = val_rc;
-	  rs->val_ra_result = val_ra_result;
 
 	  /* split ld/st's into two operations: eff addr comp + mem access */
 	  if (MD_OP_FLAGS(op) & F_MEM)
@@ -4155,12 +4033,6 @@ ruu_dispatch(void)
 	      lsq->seq = ++inst_seq;
 	      lsq->queued = lsq->issued = lsq->completed = FALSE;
 	      lsq->ptrace_seq = ptrace_seq++;
-
-	      /* Wattch: Maintain values through core for AFs*/
-	      lsq->val_ra = val_ra;
-	      lsq->val_rb = val_rb;
-	      lsq->val_rc = val_rc;
-	      lsq->val_ra_result = val_ra_result;
 
 	      /* pipetrace this uop */
 	      ptrace_newuop(lsq->ptrace_seq, "internal ld/st", lsq->PC, 0);
@@ -4197,48 +4069,16 @@ ruu_dispatch(void)
 
 	      if (OPERANDS_READY(rs))
 		{
-		  /* Wattch -- both operands ready, 2 window write accesses */
-		  /* Wattch -- FIXME: currently being read from arch.
-		     regfile (in ruu_link_idep) and written to window here.
-		     should these values be read from arch. regfile or 
-		     another window entry? */
-		  window_access++;
-		  window_access++;
-		  window_preg_access++;
-		  window_preg_access++;
-
-#ifdef DYNAMIC_AF	
-		  regfile_total_pop_count_cycle += pop_count(rs->val_ra);
-		  regfile_total_pop_count_cycle += pop_count(rs->val_rb);
-		  regfile_num_pop_count_cycle+=2;
-#endif
-
 		  /* eff addr computation ready, queue it on ready list */
 		  readyq_enqueue(rs);
 		}
-	      else if (ONE_OPERANDS_READY(rs))
-		{
-		  /* Wattch -- one operand ready, 1 window write accesses */
-		  window_access++;
-		  window_preg_access++;
-#ifdef DYNAMIC_AF	
-		  if(rs->idep_ready[0])
-		    regfile_total_pop_count_cycle += pop_count(rs->val_ra);
-		  else
-		    regfile_total_pop_count_cycle += pop_count(rs->val_rb);
-		  regfile_num_pop_count_cycle++;
-#endif
-
-		}
-		      /* issue may continue when the load/store is issued */
+	      /* issue may continue when the load/store is issued */
 	      RSLINK_INIT(last_op, lsq);
 
 	      /* issue stores only, loads are issued by lsq_refresh() */
 	      if (((MD_OP_FLAGS(op) & (F_MEM|F_STORE)) == (F_MEM|F_STORE))
 		  && OPERANDS_READY(lsq))
 		{
-		  /* Wattch -- store operand ready, 1 LSQ access */
-		  lsq_store_data_access++;
 		  /* panic("store immediately ready"); */
 		  /* put operation on ready list, ruu_issue() issue it later */
 		  readyq_enqueue(lsq);
@@ -4246,7 +4086,6 @@ ruu_dispatch(void)
 	    }
 	  else /* !(MD_OP_FLAGS(op) & F_MEM) */
 	    {
-	      /* Wattch: Regfile writes taken care of inside ruu_link_idep */
 	      /* link onto producing operation */
 	      ruu_link_idep(rs, /* idep_ready[] index */0, in1);
 	      ruu_link_idep(rs, /* idep_ready[] index */1, in2);
@@ -4264,42 +4103,10 @@ ruu_dispatch(void)
 	      /* issue op if all its reg operands are ready (no mem input) */
 	      if (OPERANDS_READY(rs))
 		{
-		  /* Wattch -- window access,
-		     both operands ready, write them to window,
-		  */
-		  window_access++;
-		  window_access++;
-		  window_preg_access++;
-		  window_preg_access++;
-
-#ifdef DYNAMIC_AF	
-		  regfile_total_pop_count_cycle += pop_count(rs->val_ra);
-		  regfile_total_pop_count_cycle += pop_count(rs->val_rb);
-		  regfile_num_pop_count_cycle+=2;
-#endif
-
 		  /* put operation on ready list, ruu_issue() issue it later */
 		  readyq_enqueue(rs);
 		  /* issue may continue */
 		  last_op = RSLINK_NULL;
-		}
-	      else if (ONE_OPERANDS_READY(rs))
-		{
-		  /* Wattch -- window access,
-		     one operand ready, write them to window,
-		  */
-		  window_access++;
-		  window_preg_access++;
-#ifdef DYNAMIC_AF	
-		  if(rs->idep_ready[0])
-		    regfile_total_pop_count_cycle += pop_count(rs->val_ra);
-		  else
-		    regfile_total_pop_count_cycle += pop_count(rs->val_rb);
-		  regfile_num_pop_count_cycle++;
-#endif
-
-		  /* could not issue this inst, stall issue until we can */
-		  RSLINK_INIT(last_op, rs);
 		}
 	      else
 		{
@@ -4483,10 +4290,6 @@ ruu_fetch(void)
        && !done;
        i++)
     {
-
-      /* Wattch: add power for i-fetch stage */
-      icache_access++;
-
       /* fetch an instruction at the next predicted fetch address */
       fetch_regs_PC = fetch_pred_PC;
 
@@ -4811,9 +4614,6 @@ sim_main(void)
       if (((LSQ_head + LSQ_num) % LSQ_size) != LSQ_tail)
 	panic("LSQ_head/LSQ_tail wedged");
 
-      /* added for Wattch to clear hardware access counters */
-      clear_access_stats();
-
       /* check if pipetracing is still active */
       ptrace_check_active(regs.regs_PC, sim_num_insn, sim_cycle);
 
@@ -4863,9 +4663,6 @@ sim_main(void)
 	ruu_fetch();
       else
 	ruu_fetch_issue_delay--;
-
-      /* Added by Wattch to update per-cycle power statistics */
-      update_power_stats();
 
       /* update buffer occupancy stats */
       IFQ_count += fetch_num;
