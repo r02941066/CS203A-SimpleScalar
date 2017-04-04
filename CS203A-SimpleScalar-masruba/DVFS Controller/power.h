@@ -274,7 +274,20 @@
 #define Vt		(1.09 * VTSCALE)
 #define Vbitsense	(0.10 * SSCALE)
 
-#define Powerfactor (Mhz)*Vdd*Vdd
+////////////////////////////////////////////////////
+/* cs203A Declaring FSF - frequency scaling factor */
+static double FSF = 1.0;
+
+/* cs203A Declaring VSF - voltage scaling factor */
+static double VSF = 1.0;
+
+/* cs203A power factor need to be able to reflect dynamically changing values of
+voltage scaling factor & frequency scaling factor
+*/
+
+#define Powerfactor (FSF*(Mhz)*VSF*VSF*Vdd*Vdd)
+
+/////////////////////////////////////////////////////
 
 #define SensePowerfactor3 (Mhz)*(Vbitsense)*(Vbitsense)
 #define SensePowerfactor2 (Mhz)*(Vbitpre-Vbitsense)*(Vbitpre-Vbitsense)
@@ -504,6 +517,11 @@ typedef struct {
   double dcache2_senseamp;
   double dcache2_tagarray;
 
+	/////////////////////////////////////////
+	/* cs203A add variable for energy*/
+	double total_energy;
+	/////////////////////////////////////////
+
   double total_power;
   double total_power_nodcache2;
   double ialu_power;
@@ -583,3 +601,9 @@ void output_data(time_result_type*, time_parameter_type*);
 void calculate_power(power_result_type*);
 int pop_count(quad_t bits);
 int pop_count_slow(quad_t bits);
+
+////////////////////////////////////////////////////
+
+/* cs203A Adding the prototype of DVFS controller */
+void dvfs_controller();
+////////////////////////////////////////////////////

@@ -47,9 +47,15 @@
 #include "cache.h"
 #include <assert.h>
 
+//////////////////////////////////////
+/* cs203A header file added for availabity of sim_cycle */
+#include "sim_header.h"
+//////////////////////////////////////
+
+#define Powerfactor (FSF*(Mhz)*VSF*VSF*Vdd*Vdd)
 #define SensePowerfactor (Mhz)*(Vdd/2)*(Vdd/2)
 #define Sense2Powerfactor (Mhz)*(2*.3+.1*Vdd)
-#define Powerfactor (Mhz)*Vdd*Vdd
+
 #define LowSwingPowerfactor (Mhz)*.2*.2
 /* set scale for crossover (vdd->gnd) currents */
 double crossover_scaling = 1.2;
@@ -209,6 +215,40 @@ static double max_cycle_power_cc1 = 0.0;
 static double max_cycle_power_cc2 = 0.0;
 static double max_cycle_power_cc3 = 0.0;
 
+
+//////////////////////////////////////////////////////////////////////////
+extern tick_t sim_cycle;
+
+/*cs203A dvfs interval*/
+extern int dvfs_interval;
+
+/*cs203A dvfs targer power*/
+extern double dvfs_target_power;
+
+/* cs203A running sum of the total power consumed during last interval */
+static double running_total_cycle_power_per_interval = 0.0;
+
+/* cs203A average power consumed per cycle during last interval */
+static double avg_power_per_interval;
+
+/* cs203A total time */
+static double dvfs_total_time = 0;
+
+/* cs203A total energy */
+static double dvfs_total_energy = 0;
+
+/* cs203A period */
+static double dvfs_current_period = 0;
+
+/* cs203A total power */
+static double dvfs_total_power = 0;
+
+// cs203A debugging
+static double fsf_sum = 0;
+static double fsf_fsf_sum = 0; 
+static int cycle_count = 0;
+//////////////////////////////////////////////////////////////////////////
+
 extern counter_t rename_access;
 extern counter_t bpred_access;
 extern counter_t window_access;
@@ -254,7 +294,8 @@ static counter_t max_rename_access;
 static counter_t max_bpred_access;
 static counter_t max_window_access;
 static counter_t max_lsq_access;
-static counter_t max_regfile_access;
+static counter_t 
+max_regfile_access;
 static counter_t max_icache_access;
 static counter_t max_dcache_access;
 static counter_t max_dcache2_access;
@@ -325,6 +366,7 @@ you could post-process
 See README.wattch for details on the various clock gating styles.
 
 */
+
 void update_power_stats()
 {
   double window_af_b, lsq_af_b, regfile_af_b, resultbus_af_b;
@@ -372,6 +414,7 @@ void update_power_stats()
   max_resultbus_access=MAX(resultbus_access,max_resultbus_access);
       
   if(rename_access) {
+	assert(power.rename_power > -1e-9);
     rename_power_cc1+=power.rename_power;
     rename_power_cc2+=((double)rename_access/(double)ruu_decode_width)*power.rename_power;
     rename_power_cc3+=((double)rename_access/(double)ruu_decode_width)*power.rename_power;
@@ -380,6 +423,8 @@ void update_power_stats()
     rename_power_cc3+=turnoff_factor*power.rename_power;
 
   if(bpred_access) {
+	assert(power.bpred_power > -1e-9);
+	assert(bpred_access > -1e-9);
     if(bpred_access <= 2)
       bpred_power_cc1+=power.bpred_power;
     else
@@ -579,32 +624,70 @@ void update_power_stats()
     resultbus_power_cc3+=turnoff_factor*power.resultbus;
 #endif
 
-  total_cycle_power = rename_power + bpred_power + window_power + 
-    lsq_power + regfile_power + icache_power + dcache_power +
-    alu_power + resultbus_power;
+  double multiplyFactor = 1; //FSF * VSF * VSF;
+	
+	assert(multiplyFactor > 0);
+	assert(FSF > 0);
+	assert(VSF > 0);
 
-  total_cycle_power_cc1 = rename_power_cc1 + bpred_power_cc1 + 
+	//cs203A
+  total_cycle_power = multiplyFactor*(rename_power + bpred_power + window_power + 
+    lsq_power + regfile_power + icache_power + dcache_power +
+    alu_power + resultbus_power);
+
+	assert(rename_power_cc1 > -1e-9);
+	assert(bpred_power_cc1 > -1e-9); 
+    assert(window_power_cc1 > -1e-9);
+	assert(lsq_power_cc1 > -1e-9);
+	assert(regfile_power_cc1 > -1e-9);
+    assert(icache_power_cc1 > -1e-9);
+	assert(dcache_power_cc1 > -1e-9);
+	assert(alu_power_cc1 > -1e-9); 
+    assert(resultbus_power_cc1 > -1e-9);
+
+	//cs203A
+  total_cycle_power_cc1 = multiplyFactor*(rename_power_cc1 + bpred_power_cc1 + 
     window_power_cc1 + lsq_power_cc1 + regfile_power_cc1 + 
     icache_power_cc1 + dcache_power_cc1 + alu_power_cc1 + 
-    resultbus_power_cc1;
+    resultbus_power_cc1);
 
-  total_cycle_power_cc2 = rename_power_cc2 + bpred_power_cc2 + 
+	//cs203A
+  total_cycle_power_cc2 = multiplyFactor*(rename_power_cc2 + bpred_power_cc2 + 
     window_power_cc2 + lsq_power_cc2 + regfile_power_cc2 + 
     icache_power_cc2 + dcache_power_cc2 + alu_power_cc2 + 
-    resultbus_power_cc2;
+    resultbus_power_cc2);
 
-  total_cycle_power_cc3 = rename_power_cc3 + bpred_power_cc3 + 
+	//cs203A
+  total_cycle_power_cc3 = multiplyFactor*(rename_power_cc3 + bpred_power_cc3 + 
     window_power_cc3 + lsq_power_cc3 + regfile_power_cc3 + 
     icache_power_cc3 + dcache_power_cc3 + alu_power_cc3 + 
-    resultbus_power_cc3;
+    resultbus_power_cc3);
 
   clock_power_cc1+=power.clock_power*(total_cycle_power_cc1/total_cycle_power);
   clock_power_cc2+=power.clock_power*(total_cycle_power_cc2/total_cycle_power);
   clock_power_cc3+=power.clock_power*(total_cycle_power_cc3/total_cycle_power);
 
-  total_cycle_power_cc1 += clock_power_cc1;
-  total_cycle_power_cc2 += clock_power_cc2;
-  total_cycle_power_cc3 += clock_power_cc3;
+	// cs203A
+  total_cycle_power_cc1 += multiplyFactor*clock_power_cc1;
+  total_cycle_power_cc2 += multiplyFactor*clock_power_cc2;
+  total_cycle_power_cc3 += multiplyFactor*clock_power_cc3;
+
+	int my_c = (int)sim_cycle;
+/*	if (99990 <= my_c && my_c <= 100010) {
+		printf("sagol %d %d\n", my_c, (int)sim_cycle);
+		printf("p: last=%lf %lf\n", last_single_total_cycle_power_cc1, total_cycle_power_cc1);
+		printf("%lf %lf %lf %lf %lf %lf %lf %lf %lf\n", rename_power_cc1,bpred_power_cc1,window_power_cc1,
+				lsq_power_cc1,regfile_power_cc1,icache_power_cc1,dcache_power_cc1,alu_power_cc1,
+				resultbus_power_cc1);
+	}*/
+/*	if (last_single_total_cycle_power_cc1 - total_cycle_power_cc1 > 1e-3) {
+		printf("sagol %d %d\n", my_c, (int)sim_cycle);
+		printf("p: last=%lf %lf\n", last_single_total_cycle_power_cc1, total_cycle_power_cc1);
+	}*/
+
+	assert(total_cycle_power_cc1 > -1e-3);
+	assert(last_single_total_cycle_power_cc1 > -1e-3);
+	assert(last_single_total_cycle_power_cc1 + 1e-3 < total_cycle_power_cc1);
 
   current_total_cycle_power_cc1 = total_cycle_power_cc1
     -last_single_total_cycle_power_cc1;
@@ -621,7 +704,121 @@ void update_power_stats()
   last_single_total_cycle_power_cc2 = total_cycle_power_cc2;
   last_single_total_cycle_power_cc3 = total_cycle_power_cc3;
 
+
+	////////////////////////////////////////////////////////////////////////////////
+
+	/* cs203A	Add the current_total_cycle_power to the running sum of the power per interval for this one cycle */
+	assert(current_total_cycle_power_cc1 > -1e-9);
+	assert(current_total_cycle_power_cc2 > -1e-9);
+	assert(current_total_cycle_power_cc3 > -1e-9);	
+	running_total_cycle_power_per_interval  += current_total_cycle_power_cc1
+	+ current_total_cycle_power_cc2
+	+ current_total_cycle_power_cc3;
+
+
+	// update the total time using the current FSF : total time += period = 1/freq.
+	dvfs_current_period = 1.0 / (double)(Mhz*FSF);
+	dvfs_total_power += current_total_cycle_power_cc1 + 
+			current_total_cycle_power_cc2  +
+			current_total_cycle_power_cc3;
+
+/*
+	dvfs_total_energy += (current_total_cycle_power_cc1 + 
+			current_total_cycle_power_cc2  +
+			current_total_cycle_power_cc3) * dvfs_current_period;
+*/	
+	dvfs_total_time += dvfs_current_period;
+
+	if (my_c % (dvfs_interval/10) == 0) {
+		printf("in sim cycle... %d\n", my_c);
+	}
+
+	/* cs203A	The dvfs controller needs to be triggered every DVFSInterval cycles*/
+	if(my_c > 0 && my_c % ((int)dvfs_interval) == 0){
+printf("called>>>\n");
+		/* cs203A call dvfs controller if sim_cycle is divisible by DVFSInterval */
+		dvfs_controller();
+		// cs203A reset the current sum for the starting of new dvfs interval;
+		running_total_cycle_power_per_interval = 0;
+		fsf_sum += FSF;
+		fsf_fsf_sum += FSF*FSF;
+	}
+	
+	// cs203A debug
+	//////////////////////////////////////////////////////////////////////////////////////////
 }
+
+
+////////////////////////////////////////////////////////////////////////////////
+/* cs203A the function for DVFS controller */
+
+char buf[100];
+char* myfname(char* prefix, int value) {
+	sprintf(buf,"%s_%d.txt", prefix, value);
+	return buf;
+}
+
+void dvfs_controller(){
+	static FILE* f_fsf = NULL;
+	static FILE* f_vsf = NULL;
+	static FILE* f_avg_pwr = NULL;
+	static FILE* f_tgt_pwr = NULL;
+	static int file_opened = 0;
+	if (file_opened == 0) {
+		file_opened = 1;
+		f_fsf = fopen(myfname("fsf", (int)dvfs_target_power), "w");
+		f_vsf = fopen(myfname("vsf", (int)dvfs_target_power), "w");
+		f_avg_pwr = fopen(myfname("avg_pwr" , (int)dvfs_target_power), "w");
+		f_tgt_pwr = fopen(myfname("tgt_pwr", (int)dvfs_target_power), "w");
+	}
+	assert(f_fsf != NULL);
+	assert(f_vsf != NULL);
+	assert(f_avg_pwr != NULL);
+	assert(f_tgt_pwr != NULL);
+
+	fprintf(f_fsf, "%.6lf\n", FSF);
+	fprintf(f_vsf, "%.6lf\n", VSF);
+
+	fprintf(f_tgt_pwr, "%.6lf\n", dvfs_target_power);
+
+	cycle_count++;
+
+	assert(running_total_cycle_power_per_interval > 0);
+	assert(dvfs_interval > 0);
+
+	avg_power_per_interval = running_total_cycle_power_per_interval / dvfs_interval;
+	//printf("mts %lf sim_cycle %d\n", avg_power_per_interval, (int)sim_cycle);
+	fprintf(f_avg_pwr, "%.6lf\n", avg_power_per_interval);
+
+	if( avg_power_per_interval < dvfs_target_power){
+
+		/* cs203A FSF's value is varied between 0.2 and 2.0.*/
+		if(FSF <= 1.8){
+			FSF += 0.2;
+		}
+
+		/* cs203A VSF's value is varied between 0.2 and 2.0.*/
+		if(VSF <= 1.8){
+			VSF += 0.2;
+		}
+		calculate_power(&power);
+	}
+	/* cs203A if average power in the last interval is greater than DVFSTargetPower, then the FSF and VSF is decremented by 0.2*/
+	else if( avg_power_per_interval > dvfs_target_power){
+
+		/* cs203A FSF's value is varied between 0.2 and 2.0.*/
+		if(FSF >= 0.4){
+			FSF -= 0.2;
+		}
+
+		/* cs203A VSF's value is varied between 0.2 and 2.0.*/
+		if(VSF >= 0.4){
+			VSF -= 0.2;
+		}
+		calculate_power(&power);
+	}
+}
+////////////////////////////////////////////////////////////////////////////////
 
 void
 power_reg_stats(struct stat_sdb_t *sdb)	/* stats database */
@@ -686,7 +883,26 @@ power_reg_stats(struct stat_sdb_t *sdb)	/* stats database */
 
   stat_reg_formula(sdb, "avg_issue_power", "average power of issue unit per cycle", "(resultbus_power + alu_power + dcache_power + dcache2_power + window_power + lsq_power)/ sim_cycle", /* format */NULL);
 
-  stat_reg_formula(sdb, "total_power", "total power per cycle","(rename_power + bpred_power + window_power + lsq_power + regfile_power + icache_power  + resultbus_power + clock_power + alu_power + dcache_power + dcache2_power)", NULL);
+  //stat_reg_formula(sdb, "total_power", "total power per cycle","(rename_power + bpred_power + window_power + lsq_power + regfile_power + icache_power  + resultbus_power + clock_power + alu_power + dcache_power + dcache2_power)", NULL);
+
+	////////////////////////////////////////////////////////////////////////////////////////////
+	/* cs203A print total time and energy value */
+  stat_reg_double(sdb, "total_dvfs_power", "dvfs total power",&dvfs_total_power, 0, NULL);
+	
+  stat_reg_formula(sdb, "avg_dvfs_power_cycle", "average dvfs power per cycle","total_dvfs_power/sim_cycle", NULL);
+
+	stat_reg_double(sdb, "total_dvfs_time", "total time (DVFS)", &dvfs_total_time, 0, NULL);
+
+	//stat_reg_double(sdb, "total_dvfs_energy", "total energy per cycle", &dvfs_total_energy, 0, NULL);
+
+	// cs203A debugging 
+  stat_reg_double(sdb, "fsf_sum", "FSF sum", &fsf_sum, 0, NULL);
+  stat_reg_double(sdb, "fsf_fsf_sum", "sum of FSF*FSF", &fsf_fsf_sum, 0, NULL);
+  stat_reg_int(sdb, "cycle_count", "Total Nmber of Cycles", &cycle_count, 0, NULL);
+  stat_reg_formula(sdb, "avg_fsf", "average fsf per cycle","fsf_sum/cycle_count", NULL);
+  stat_reg_formula(sdb, "avg_fsf_fsf", "average fsf_fsf per cycle","fsf_fsf_sum/cycle_count", NULL);
+
+	////////////////////////////////////////////////////////////////////////////////////////////
 
   stat_reg_formula(sdb, "avg_total_power_cycle", "average total power per cycle","(rename_power + bpred_power + window_power + lsq_power + regfile_power + icache_power + resultbus_power + clock_power + alu_power + dcache_power + dcache2_power)/sim_cycle", NULL);
 
@@ -1020,6 +1236,12 @@ double squarify_new(int rows, int cols)
 void dump_power_stats(power)
      power_result_type *power;
 {
+
+	/////////////////////////////////////////
+	/* cs203A add variable for energy*/
+	double total_energy;
+	/////////////////////////////////////////
+
   double total_power;
   double bpred_power;
   double rename_power;
@@ -1351,6 +1573,7 @@ double array_bitline_power(rows,cols,bitlinelength,rports,wports,cache)
      int rports,wports;
      int cache;
 {
+
   double Ctotal=0;
   double Ccolmux=0;
   double Cbitrowr=0;
@@ -1553,6 +1776,7 @@ double simple_array_power(rows,cols,rports,wports,cache)
 double cam_tagdrive(rows,cols,rports,wports)
      int rows,cols,rports,wports;
 {
+
   double Ctotal, Ctlcap, Cblcap, Cwlcap;
   double taglinelength;
   double wordlinelength;
@@ -1595,6 +1819,7 @@ double cam_tagdrive(rows,cols,rports,wports)
 double cam_tagmatch(rows,cols,rports,wports)
      int rows,cols,rports,wports;
 {
+
   double Ctotal, Cmlcap;
   double matchlinelength;
   int ports;
@@ -1631,6 +1856,7 @@ double cam_array(rows,cols,rports,wports)
 
 double selection_power(int win_entries)
 {
+
   double Ctotal, Cor, Cpencode;
   int num_arbiter=1;
 
@@ -1754,6 +1980,7 @@ double global_clockpower(double die_length)
 
 double compute_resultbus_power()
 {
+
   double Ctotal, Cline;
 
   double regfile_height;
@@ -1787,6 +2014,7 @@ double compute_resultbus_power()
 void calculate_power(power)
      power_result_type *power;
 {
+
   double clockpower;
   double predeclength, wordlinelength, bitlinelength;
   int ndwl, ndbl, nspd, ntwl, ntbl, ntspd, c,b,a,cache, rowsb, colsb;
@@ -2319,6 +2547,6 @@ void calculate_power(power)
   power->regfile_power_nobit = power->regfile_decoder + 
     power->regfile_wordline + power->regfile_senseamp;
 
-  dump_power_stats(power);
+  //dump_power_stats(power);
 
 }

@@ -76,6 +76,13 @@
 /* added for Wattch */
 #include "power.h"
 
+//////////////////////////////////////
+/* cs203A header file added for availabity of sim_cycle*/
+#include "sim_header.h"
+//////////////////////////////////////
+
+tick_t sim_cycle = 0;
+
 /*
  * This file implements a very detailed out-of-order issue superscalar
  * processor with a two-level memory system and speculative execution support.
@@ -366,9 +373,6 @@ static counter_t sim_num_branches = 0;
 
 /* total number of branches executed */
 static counter_t sim_total_branches = 0;
-
-/* cycle counter */
-static tick_t sim_cycle = 0;
 
 /* occupancy counters */
 static counter_t IFQ_count;		/* cumulative IFQ occupancy */
@@ -772,6 +776,23 @@ sim_reg_options(struct opt_odb_t *odb)
 	      &ruu_commit_width, /* default */4,
 	      /* print */TRUE, /* format */NULL);
 
+	////////////////////////////////////////////////////
+	/* cs203A adding the option to take DVFSInterval as input from the user*/
+
+	opt_reg_int(odb, "-dvfs:interval", "DVFS Intervals",
+	      &dvfs_interval, /* default */100000,
+	      /* print */TRUE, /* format */NULL);
+
+	/* cs203A adding the option to take DVFSTargetPower as input from the user This value is to be determined per
+	application by pre-running the simulation for each application with default sim-wattch settings -
+	counter name in the reported simulator output is avg_total_power_cycle */
+
+	opt_reg_double(odb, "-dvfs:target_power", "DVFS TargetPower",
+	      &dvfs_target_power, /* default */71.7882,
+	      /* print */TRUE, /* format */NULL);
+	/////////////////////////////////////////////////////////////
+
+
   /* register scheduler options */
 
   opt_reg_int(odb, "-ruu:size",
@@ -925,6 +946,7 @@ sim_reg_options(struct opt_odb_t *odb)
   opt_reg_flag(odb, "-bugcompat",
 	       "operate in backward-compatible bugs mode (for testing only)",
 	       &bugcompat_mode, /* default */FALSE, /* print */TRUE, NULL);
+
 }
 
 /* check simulator-specific option values */
@@ -4864,8 +4886,11 @@ sim_main(void)
       else
 	ruu_fetch_issue_delay--;
 
-      /* Added by Wattch to update per-cycle power statistics */
-      update_power_stats();
+	/* Added by Wattch to update per-cycle power statistics */
+	
+	/*	cs203A send the number of cycles*/
+	update_power_stats();
+
 
       /* update buffer occupancy stats */
       IFQ_count += fetch_num;
@@ -4882,4 +4907,5 @@ sim_main(void)
       if (max_insts && sim_num_insn >= max_insts)
 	return;
     }
+
 }
