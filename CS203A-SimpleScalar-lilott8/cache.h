@@ -156,6 +156,9 @@ struct cache_t
   int assoc;			/* cache associativity */
   enum cache_policy policy;	/* cache replacement policy */
   unsigned int hit_latency;	/* cache hit latency */
+  int prefetch;		// CS203a: prefetch size
+  unsigned char isBuffer; // CS203a: is this a buffer, needed for prefetching and flushing
+  md_addr_t previousBaddr; // CS203a: this is the previous addr we used,
 
   /* miss/replacement handler, read/write BSIZE bytes starting at BADDR
      from/into cache block BLK, returns the latency of the operation
@@ -210,7 +213,14 @@ struct cache_t
      defined in this structure! */
   struct cache_set_t sets[1];	/* each entry is a set */
 };
-
+/******************************
+* CS203A
+******************************/
+/** Instance of cache, size of prefetch **/
+void setPrefetchSize(struct cache_t *cp, int size);
+/******************************
+* CS203A
+******************************/
 /* create and initialize a general cache structure */
 struct cache_t *			/* pointer to cache created */
 cache_create(char *name,		/* name of the cache */
@@ -226,6 +236,26 @@ cache_create(char *name,		/* name of the cache */
 					   struct cache_blk_t *blk,
 					   tick_t now),
 	     unsigned int hit_latency);/* latency in cycles for a hit */
+
+/*---------------------------------cs203a begin--------------------------------------------------*/	  
+/* Adds paramater prefetchSize to cache creation function from above */   
+	     /* create and initialize a general cache structure */
+struct cache_t *			/* pointer to cache created */
+cache_create_new(char *name,		/* name of the cache */
+	     int nsets,			/* total number of sets in cache */
+	     int bsize,			/* block (line) size of cache */
+	     int balloc,		/* allocate data space for blocks? */
+	     int usize,			/* size of user data to alloc w/blks */
+	     int assoc,			/* associativity of cache */
+	     enum cache_policy policy,	/* replacement policy w/in sets */
+	     /* block access function, see description w/in struct cache def */
+	     unsigned int (*blk_access_fn)(enum mem_cmd cmd,
+					   md_addr_t baddr, int bsize,
+					   struct cache_blk_t *blk,
+					   tick_t now),
+	     unsigned int hit_latency, /* latency in cycles for a hit */
+	     int prefetchSize); //--------------------cs203a added
+/*---------------------------------cs203a begin--------------------------------------------------*/	 
 
 /* parse policy */
 enum cache_policy			/* replacement policy enum */
@@ -278,6 +308,8 @@ cache_access(struct cache_t *cp,	/* cache to access */
   cache_access(cp, cmd, addr, p, sizeof(short), now, udata)
 #define cache_byte(cp, cmd, addr, p, now, udata)	\
   cache_access(cp, cmd, addr, p, sizeof(char), now, udata)
+
+int fill_stream_buffer(struct cache_t *cp, md_addr_t addr, void *vp, enum mem_cmd cmd, int nbytes, tick_t now);
 
 /* return non-zero if block containing address ADDR is contained in cache
    CP, this interface is used primarily for debugging and asserting cache
